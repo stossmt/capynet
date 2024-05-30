@@ -1,6 +1,9 @@
 use eframe::egui;
 use egui::{ColorImage, TextureHandle};
 
+mod error;
+mod font;
+
 #[derive(Default)]
 pub struct MyApp {
     texture: Option<TextureHandle>,
@@ -25,6 +28,13 @@ impl MyApp {
         let window_width = ctx.available_rect().width() as usize - 18;
         let window_height = ctx.available_rect().height() as usize - 18;
         let bitmap = draw_pixels(window_width, window_height);
+
+        // FIXME: Implement font rendering
+        let parsed_font = font::parse_from_file("invalid_filepath");
+        match parsed_font {
+            Ok(f) => println!("parsed_font {}", f),
+            Err(e) => println!("failed to parse font at filepath 'invalid_filepath': {}", e),
+        }
 
         let color_image: ColorImage =
             ColorImage::from_rgba_unmultiplied([window_width, window_height], &bitmap);
