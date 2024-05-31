@@ -74,7 +74,7 @@ impl CapyError {
         Self {
             error_impl: Box::new(ErrorImpl {
                 code,
-                message,
+                message: message.to_string(),
                 source: None,
             }),
         }
@@ -88,26 +88,44 @@ impl CapyError {
         Self {
             error_impl: Box::new(ErrorImpl {
                 code,
-                message,
+                message: message.to_string(),
                 source: Some(source),
             }),
         }
+    }
+
+    pub fn with_context(mut self, extra_context: &str) -> Self {
+        self.error_impl.message = format!("{}: {}", extra_context, self.error_impl.message);
+        self
     }
 }
 
 #[derive(Debug)]
 struct ErrorImpl {
     code: ErrorCode,
-    message: &'static str,
+    message: String,
     source: Option<Box<dyn std::error::Error + 'static>>,
 }
 
 impl From<std::io::Error> for CapyError {
     fn from(err: std::io::Error) -> CapyError {
         CapyError::with_source(
-            ErrorCode::InvalidArgument,
-            "I/O Error occurred",
+            ErrorCode::Unknown,
+            "FIXME: define a real IOError => CapyError mapping",
             Box::new(err),
         )
+    }
+}
+
+pub trait ResultExt<T, E> {
+    fn with_error_context(self, context: &'static str) -> Result<T, CapyError>;
+}
+
+impl<T, E> ResultExt<T, E> for Result<T, E>
+where
+    E: Into<CapyError>,
+{
+    fn with_error_context(self, context: &'static str) -> Result<T, CapyError> {
+        self.map_err(|e| e.into().with_context(context))
     }
 }

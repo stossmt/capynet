@@ -1,4 +1,4 @@
-use crate::error::{CapyError, ErrorCode};
+use crate::error::{CapyError, ErrorCode, ResultExt};
 use std::fmt::{self, Display, Formatter};
 use std::io::Read;
 
@@ -79,7 +79,8 @@ pub fn parse_from_file(filepath: &str) -> Result<Font, CapyError> {
     let mut parser = ByteParser::new(&buffer);
 
     // Parse required tables
-    let font_directory_table = parse_font_directory_table(&mut parser)?;
+    let font_directory_table = parse_font_directory_table(&mut parser)
+        .with_error_context("failed to parse table FontDirectorytable")?;
 
     Ok(Font {
         // Required tables
@@ -110,43 +111,64 @@ struct ByteParser<'a> {
 }
 
 impl<'a> ByteParser<'a> {
+    const U32_SIZE: usize = 4;
+    const U16_SIZE: usize = 2;
+
     fn new(buffer: &'a [u8]) -> Self {
         Self { buffer, offset: 0 }
     }
 
     fn read_be_u32(&mut self) -> Result<u32, CapyError> {
-        match self.buffer[self.offset..self.offset + 4].try_into() {
-            Ok(bytes) => {
-                let value = u32::from_be_bytes(bytes);
-                self.offset += 4;
-                Ok(value)
-            }
-            Err(_) => Err(CapyError::new(
+        if self.offset + Self::U32_SIZE <= self.buffer.len() {
+            let bytes = match self.buffer[self.offset..self.offset + Self::U32_SIZE].try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    return Err(CapyError::new(
+                        ErrorCode::OutOfRange,
+                        "Failed to convert buffer slice to u32",
+                    ))
+                }
+            };
+            let value = u32::from_be_bytes(bytes);
+            self.offset += Self::U32_SIZE;
+            Ok(value)
+        } else {
+            Err(CapyError::new(
                 ErrorCode::OutOfRange,
                 "Buffer too small for u32",
-            )),
+            ))
         }
     }
 
     fn read_be_u16(&mut self) -> Result<u16, CapyError> {
-        match self.buffer[self.offset..self.offset + 2].try_into() {
-            Ok(bytes) => {
-                let value = u16::from_be_bytes(bytes);
-                self.offset += 2;
-                Ok(value)
-            }
-            Err(_) => Err(CapyError::new(
+        if self.offset + Self::U16_SIZE <= self.buffer.len() {
+            let bytes = match self.buffer[self.offset..self.offset + Self::U16_SIZE].try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    return Err(CapyError::new(
+                        ErrorCode::OutOfRange,
+                        "Failed to convert buffer slice to u16",
+                    ))
+                }
+            };
+            let value = u16::from_be_bytes(bytes);
+            self.offset += Self::U16_SIZE;
+            Ok(value)
+        } else {
+            Err(CapyError::new(
                 ErrorCode::OutOfRange,
-                "Buffer too small for u32",
-            )),
+                "Buffer too small for u16",
+            ))
         }
     }
 }
 
 fn parse_font_directory_table(parser: &mut ByteParser) -> Result<FontDirectoryTable, CapyError> {
-    let offset_subtable = parse_offset_table(parser)?;
+    let offset_subtable =
+        parse_offset_table(parser).with_error_context("failed to parse OffsetSubtable")?;
     let table_directory_subtables =
-        parse_table_directory_subtables(parser, offset_subtable.num_tables)?;
+        parse_table_directory_subtables(parser, offset_subtable.num_tables)
+            .with_error_context("failed to parse TableDirectorySubtables")?;
     Ok(FontDirectoryTable {
         offset_subtable,
         table_directory_subtables,
@@ -154,11 +176,21 @@ fn parse_font_directory_table(parser: &mut ByteParser) -> Result<FontDirectoryTa
 }
 
 fn parse_offset_table(parser: &mut ByteParser) -> Result<OffsetSubtable, CapyError> {
-    let scalar_type = parser.read_be_u32()?;
-    let num_tables = parser.read_be_u16()?;
-    let search_range = parser.read_be_u16()?;
-    let entry_selector = parser.read_be_u16()?;
-    let range_shift = parser.read_be_u16()?;
+    let scalar_type = parser
+        .read_be_u32()
+        .with_error_context("failed to parse field scalar_type")?;
+    let num_tables = parser
+        .read_be_u16()
+        .with_error_context("failed to parse field num_tables")?;
+    let search_range = parser
+        .read_be_u16()
+        .with_error_context("failed to parse field search_range")?;
+    let entry_selector = parser
+        .read_be_u16()
+        .with_error_context("failed to parse field entry_selector")?;
+    let range_shift = parser
+        .read_be_u16()
+        .with_error_context("failed to parse field range_shift")?;
 
     Ok(OffsetSubtable {
         scalar_type,
@@ -175,10 +207,18 @@ fn parse_table_directory_subtables(
 ) -> Result<Vec<TableDirectorySubtable>, CapyError> {
     let mut subtables = Vec::new();
     for _ in 0..num_tables {
-        let tag = parser.read_be_u32()?;
-        let check_sum = parser.read_be_u32()?;
-        let offset = parser.read_be_u32()?;
-        let length = parser.read_be_u32()?;
+        let tag = parser
+            .read_be_u32()
+            .with_error_context("failed to parse field tag")?;
+        let check_sum = parser
+            .read_be_u32()
+            .with_error_context("failed to parse field check_sum")?;
+        let offset = parser
+            .read_be_u32()
+            .with_error_context("failed to parse field offset")?;
+        let length = parser
+            .read_be_u32()
+            .with_error_context("failed to parse field length")?;
         subtables.push(TableDirectorySubtable {
             tag,
             check_sum,
