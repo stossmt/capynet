@@ -118,14 +118,14 @@ impl From<std::io::Error> for CapyError {
 }
 
 pub trait ResultExt<T, E> {
-    fn with_error_context(self, context: &'static str) -> Result<T, CapyError>;
+    fn error_context(self, context: &'static str) -> Result<T, CapyError>;
 }
 
 impl<T, E> ResultExt<T, E> for Result<T, E>
 where
     E: Into<CapyError>,
 {
-    fn with_error_context(self, context: &'static str) -> Result<T, CapyError> {
+    fn error_context(self, context: &'static str) -> Result<T, CapyError> {
         self.map_err(|e| e.into().with_context(context))
     }
 }

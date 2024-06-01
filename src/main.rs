@@ -30,9 +30,9 @@ impl MyApp {
         let bitmap = draw_pixels(window_width, window_height);
 
         // FIXME: Implement font rendering
-        let parsed_font = font::parse_from_file("invalid_filepath");
+        let parsed_font = font::parse_from_file("assets/fonts/arial.ttf");
         match parsed_font {
-            Ok(f) => println!("parsed_font {}", f),
+            Ok(f) => println!("parsed_font {:#?}", f),
             Err(e) => println!("failed to parse font at filepath 'invalid_filepath': {}", e),
         }
 
