@@ -6,6 +6,9 @@ use std::io::Read;
 pub struct Font {
     font_directory_table: FontDirectoryTable,
     cmap_table: CmapTable,
+    head_table: HeadTable,
+    hhea_table: HheaTable,
+    maxp_table: MaxpTable,
     // Other required tables can be added here as needed
 }
 
@@ -73,6 +76,64 @@ struct CmapTable {
     format_four_table: Option<CmapFormatFourTable>,
 }
 
+#[derive(Debug)]
+struct HeadTable {
+    version: u32,
+    font_revision: u32,
+    check_sum_adjustment: u32,
+    magic_number: u32,
+    flags: u16,
+    units_per_em: u16,
+    created: u32,
+    modified: u32,
+    x_min: i16,
+    y_min: i16,
+    x_max: i16,
+    y_max: i16,
+    mac_style: u16,
+    lowest_rec_ppem: u16,
+    font_direction_hint: i16,
+    index_to_loc_format: i16,
+    glyph_data_format: i16,
+}
+
+#[derive(Debug)]
+struct HheaTable {
+    version: u32,
+    ascent: i16,
+    descent: i16,
+    line_gap: i16,
+    advance_width_max: u16,
+    min_left_side_bearing: i16,
+    min_right_side_bearing: i16,
+    x_max_extent: i16,
+    caret_slope_rise: i16,
+    caret_slope_run: i16,
+    caret_offset: i16,
+    reserved: [i16; 4],
+    metric_data_format: i16,
+    number_of_hmetrics: u16,
+}
+
+#[derive(Debug)]
+struct MaxpTable {
+    version: u32,
+    num_glyphs: u16,
+    max_points: u16,
+    max_contours: u16,
+    max_composite_points: u16,
+    max_composite_contours: u16,
+    max_zones: u16,
+    max_twilight_points: u16,
+    max_storage: u16,
+    max_function_defs: u16,
+    max_instruction_defs: u16,
+    max_stack_elements: u16,
+    max_size_of_instructions: u16,
+    max_component_elements: u16,
+    max_component_depth: u16,
+}
+
 enum TableTag {
     Dsig = 1146308935,
     Gdef = 1195656518,
@@ -108,10 +169,16 @@ pub fn parse_from_file(filepath: &str) -> Result<Font, CapyError> {
 
     let font_directory_table = parse_font_directory_table(&mut parser)?;
     let cmap_table = parse_cmap_table(&mut parser, &font_directory_table)?;
+    let head_table = parse_head_table(&mut parser, &font_directory_table)?;
+    let hhea_table = parse_hhea_table(&mut parser, &font_directory_table)?;
+    let maxp_table = parse_maxp_table(&mut parser, &font_directory_table)?;
 
     Ok(Font {
         font_directory_table,
         cmap_table,
+        head_table,
+        hhea_table,
+        maxp_table,
     })
 }
 
@@ -121,9 +188,10 @@ struct ByteParser<'a> {
 }
 
 impl<'a> ByteParser<'a> {
+    const U8_SIZE: usize = 1;
     const U32_SIZE: usize = 4;
     const U16_SIZE: usize = 2;
-    const U8_256_ARRAY_SIZE: usize = 256;
+    const I16_SIZE: usize = 2;
 
     fn new(buffer: &'a [u8]) -> Self {
         Self { buffer, offset: 0 }
@@ -142,14 +210,31 @@ impl<'a> ByteParser<'a> {
     }
 
     fn read_u8_array_256(&mut self) -> Result<[u8; 256], CapyError> {
-        if self.offset + Self::U8_256_ARRAY_SIZE <= self.buffer.len() {
-            let bytes = &self.buffer[self.offset..self.offset + Self::U8_256_ARRAY_SIZE];
-            self.offset += Self::U8_256_ARRAY_SIZE;
+        if self.offset + Self::U8_SIZE * 256 <= self.buffer.len() {
+            let bytes = &self.buffer[self.offset..self.offset + Self::U8_SIZE * 256];
+            self.offset += Self::U8_SIZE * 256;
             Ok(bytes.try_into().unwrap())
         } else {
             Err(CapyError::new(
                 ErrorCode::OutOfRange,
                 "Buffer too small for u8 array",
+            ))
+        }
+    }
+
+    fn read_be_i16_array_4(&mut self) -> Result<[i16; 4], CapyError> {
+        if self.offset + Self::I16_SIZE * 4 <= self.buffer.len() {
+            let mut array = [0; 4];
+            for i in 0..4 {
+                let bytes = &self.buffer[self.offset..self.offset + Self::I16_SIZE];
+                self.offset += Self::I16_SIZE;
+                array[i] = i16::from_be_bytes(bytes.try_into().unwrap());
+            }
+            Ok(array)
+        } else {
+            Err(CapyError::new(
+                ErrorCode::OutOfRange,
+                "Buffer too small for i16 array",
             ))
         }
     }
@@ -176,6 +261,19 @@ impl<'a> ByteParser<'a> {
             Err(CapyError::new(
                 ErrorCode::OutOfRange,
                 "Buffer too small for u16",
+            ))
+        }
+    }
+
+    fn read_be_i16(&mut self) -> Result<i16, CapyError> {
+        if self.offset + Self::U16_SIZE <= self.buffer.len() {
+            let bytes = &self.buffer[self.offset..self.offset + Self::U16_SIZE];
+            self.offset += Self::U16_SIZE;
+            Ok(i16::from_be_bytes(bytes.try_into().unwrap()))
+        } else {
+            Err(CapyError::new(
+                ErrorCode::OutOfRange,
+                "Buffer too small for i16",
             ))
         }
     }
@@ -324,6 +422,82 @@ fn parse_cmap_encoding_subtables(
         });
     }
     Ok(tables)
+}
+
+fn parse_head_table(
+    parser: &mut ByteParser,
+    font_directory_table: &FontDirectoryTable,
+) -> Result<HeadTable, CapyError> {
+    let head_offset = lookup_offset_for_tag(TableTag::Head, font_directory_table)?;
+    parser.set_offset(head_offset)?;
+    Ok(HeadTable {
+        version: parser.read_be_u32()?,
+        font_revision: parser.read_be_u32()?,
+        check_sum_adjustment: parser.read_be_u32()?,
+        magic_number: parser.read_be_u32()?,
+        flags: parser.read_be_u16()?,
+        units_per_em: parser.read_be_u16()?,
+        created: parser.read_be_u32()?,
+        modified: parser.read_be_u32()?,
+        x_min: parser.read_be_i16()?,
+        y_min: parser.read_be_i16()?,
+        x_max: parser.read_be_i16()?,
+        y_max: parser.read_be_i16()?,
+        mac_style: parser.read_be_u16()?,
+        lowest_rec_ppem: parser.read_be_u16()?,
+        font_direction_hint: parser.read_be_i16()?,
+        index_to_loc_format: parser.read_be_i16()?,
+        glyph_data_format: parser.read_be_i16()?,
+    })
+}
+
+fn parse_hhea_table(
+    parser: &mut ByteParser,
+    font_directory_table: &FontDirectoryTable,
+) -> Result<HheaTable, CapyError> {
+    let hhea_offset = lookup_offset_for_tag(TableTag::Hhea, font_directory_table)?;
+    parser.set_offset(hhea_offset)?;
+    Ok(HheaTable {
+        version: parser.read_be_u32()?,
+        ascent: parser.read_be_i16()?,
+        descent: parser.read_be_i16()?,
+        line_gap: parser.read_be_i16()?,
+        advance_width_max: parser.read_be_u16()?,
+        min_left_side_bearing: parser.read_be_i16()?,
+        min_right_side_bearing: parser.read_be_i16()?,
+        x_max_extent: parser.read_be_i16()?,
+        caret_slope_rise: parser.read_be_i16()?,
+        caret_slope_run: parser.read_be_i16()?,
+        caret_offset: parser.read_be_i16()?,
+        reserved: parser.read_be_i16_array_4()?,
+        metric_data_format: parser.read_be_i16()?,
+        number_of_hmetrics: parser.read_be_u16()?,
+    })
+}
+
+fn parse_maxp_table(
+    parser: &mut ByteParser,
+    font_directory_table: &FontDirectoryTable,
+) -> Result<MaxpTable, CapyError> {
+    let maxp_offset = lookup_offset_for_tag(TableTag::Maxp, font_directory_table)?;
+    parser.set_offset(maxp_offset)?;
+    Ok(MaxpTable {
+        version: parser.read_be_u32()?,
+        num_glyphs: parser.read_be_u16()?,
+        max_points: parser.read_be_u16()?,
+        max_contours: parser.read_be_u16()?,
+        max_composite_points: parser.read_be_u16()?,
+        max_composite_contours: parser.read_be_u16()?,
+        max_zones: parser.read_be_u16()?,
+        max_twilight_points: parser.read_be_u16()?,
+        max_storage: parser.read_be_u16()?,
+        max_function_defs: parser.read_be_u16()?,
+        max_instruction_defs: parser.read_be_u16()?,
+        max_stack_elements: parser.read_be_u16()?,
+        max_size_of_instructions: parser.read_be_u16()?,
+        max_component_elements: parser.read_be_u16()?,
+        max_component_depth: parser.read_be_u16()?,
+    })
 }
 
 fn read_file_to_byte_buffer(filepath: &str) -> Result<Vec<u8>, CapyError> {
