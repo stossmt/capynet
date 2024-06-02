@@ -3,6 +3,7 @@ use egui::{ColorImage, TextureHandle};
 
 mod error;
 mod font;
+mod renderer;
 
 #[derive(Default)]
 pub struct MyApp {
@@ -27,7 +28,9 @@ impl MyApp {
     fn init_texture(&mut self, ctx: &egui::Context) {
         let window_width = ctx.available_rect().width() as usize - 18;
         let window_height = ctx.available_rect().height() as usize - 18;
-        let bitmap = draw_pixels(window_width, window_height);
+        let mut bitmap = draw_pixels(window_width, window_height);
+
+        renderer::render_text(&mut bitmap, "a", 50, 50, window_width, 2).unwrap();
 
         // FIXME: Implement font rendering
         let parsed_font = font::parse_from_file("assets/fonts/arial.ttf");
