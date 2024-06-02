@@ -3,6 +3,7 @@ use egui::{ColorImage, TextureHandle};
 
 mod error;
 mod font;
+mod http;
 mod renderer;
 
 #[derive(Default)]
