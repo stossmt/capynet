@@ -31,7 +31,7 @@ impl MyApp {
         let window_height = ctx.available_rect().height() as usize - 18;
         let mut bitmap = draw_pixels(window_width, window_height);
 
-        renderer::render_text(&mut bitmap, "a", 50, 50, window_width, 2).unwrap();
+        renderer::render_text(&mut bitmap, "hellocapy", 50, 50, window_width, 5).unwrap();
 
         // FIXME: Implement font rendering
         let parsed_font = font::parse_from_file("assets/fonts/arial.ttf");

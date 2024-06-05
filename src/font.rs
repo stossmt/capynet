@@ -9,6 +9,7 @@ pub struct Font {
     head_table: HeadTable,
     hhea_table: HheaTable,
     maxp_table: MaxpTable,
+    glyf_table: GlyfTable,
     // Other required tables can be added here as needed
 }
 
@@ -134,6 +135,26 @@ struct MaxpTable {
     max_component_depth: u16,
 }
 
+#[derive(Debug)]
+struct GlyfSubtable {
+    number_of_contours: i16,
+    x_min: i16,
+    y_min: i16,
+    x_max: i16,
+    y_max: i16,
+    end_pts_of_contours: Vec<u16>,
+    instruction_length: u16,
+    instructions: Vec<u8>,
+    flags: Vec<u8>,
+    x_coordinates: Vec<i16>,
+    y_coordinates: Vec<i16>,
+}
+
+#[derive(Debug)]
+struct GlyfTable {
+    glyphs: Vec<GlyfSubtable>,
+}
+
 enum TableTag {
     Dsig = 1146308935,
     Gdef = 1195656518,
@@ -172,6 +193,7 @@ pub fn parse_from_file(filepath: &str) -> Result<Font, CapyError> {
     let head_table = parse_head_table(&mut parser, &font_directory_table)?;
     let hhea_table = parse_hhea_table(&mut parser, &font_directory_table)?;
     let maxp_table = parse_maxp_table(&mut parser, &font_directory_table)?;
+    let glyf_table = parse_glyf_table(&mut parser, &font_directory_table, maxp_table.num_glyphs)?;
 
     Ok(Font {
         font_directory_table,
@@ -179,6 +201,7 @@ pub fn parse_from_file(filepath: &str) -> Result<Font, CapyError> {
         head_table,
         hhea_table,
         maxp_table,
+        glyf_table,
     })
 }
 
@@ -235,6 +258,19 @@ impl<'a> ByteParser<'a> {
             Err(CapyError::new(
                 ErrorCode::OutOfRange,
                 "Buffer too small for i16 array",
+            ))
+        }
+    }
+
+    fn read_be_u8(&mut self) -> Result<u8, CapyError> {
+        if self.offset + Self::U8_SIZE <= self.buffer.len() {
+            let byte = self.buffer[self.offset];
+            self.offset += Self::U8_SIZE;
+            Ok(byte)
+        } else {
+            Err(CapyError::new(
+                ErrorCode::OutOfRange,
+                "Buffer too small for u8",
             ))
         }
     }
@@ -497,6 +533,111 @@ fn parse_maxp_table(
         max_size_of_instructions: parser.read_be_u16()?,
         max_component_elements: parser.read_be_u16()?,
         max_component_depth: parser.read_be_u16()?,
+    })
+}
+
+fn parse_glyf_table(
+    parser: &mut ByteParser,
+    font_directory_table: &FontDirectoryTable,
+    num_glyphs: u16,
+) -> Result<GlyfTable, CapyError> {
+    let mut glyphs = Vec::new();
+    for _ in 0..num_glyphs {
+        let glyph = parse_glyph_subtable(parser, font_directory_table)?;
+        if glyph.number_of_contours < 0 {
+            println!("Reached compound glyph");
+            break;
+        }
+        glyphs.push(glyph);
+    }
+    Ok(GlyfTable { glyphs })
+}
+
+fn parse_glyph_subtable(
+    parser: &mut ByteParser,
+    font_directory_table: &FontDirectoryTable,
+) -> Result<GlyfSubtable, CapyError> {
+    let glyf_offset = lookup_offset_for_tag(TableTag::Glyf, font_directory_table)?;
+    parser.set_offset(glyf_offset)?;
+
+    let number_of_contours = parser.read_be_i16()?;
+    let x_min = parser.read_be_i16()?;
+    let y_min = parser.read_be_i16()?;
+    let x_max = parser.read_be_i16()?;
+    let y_max = parser.read_be_i16()?;
+
+    let mut end_pts_of_contours = Vec::new();
+    for i in 0..number_of_contours {
+        end_pts_of_contours.push(parser.read_be_u16()?);
+    }
+
+    let instruction_length = parser.read_be_u16()?;
+    let mut instructions = Vec::new();
+    for _ in 0..instruction_length {
+        instructions.push(parser.read_be_u8()?);
+    }
+
+    let num_points = end_pts_of_contours[number_of_contours as usize - 1] + 1;
+    let mut flags = Vec::new();
+    let mut i = 0;
+    while i < num_points {
+        let flag = parser.read_be_u8()?;
+        flags.push(flag);
+        if flag & 0x08 != 0 {
+            let repeat_count = parser.read_be_u8()?;
+            for _ in 0..repeat_count {
+                flags.push(flag);
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+
+    let mut x_coordinates = Vec::new();
+    let mut y_coordinates = Vec::new();
+    let mut x = 0;
+    let mut y = 0;
+
+    for flag in &flags {
+        if flag & 0x02 != 0 {
+            let dx = parser.read_be_u8()?;
+            x += if flag & 0x10 != 0 {
+                dx as i16
+            } else {
+                -(dx as i16)
+            };
+        } else if flag & 0x10 == 0 {
+            x += parser.read_be_i16()?;
+        }
+        x_coordinates.push(x);
+    }
+
+    for flag in &flags {
+        if flag & 0x04 != 0 {
+            let dy = parser.read_be_u8()?;
+            y += if flag & 0x20 != 0 {
+                dy as i16
+            } else {
+                -(dy as i16)
+            };
+        } else if flag & 0x20 == 0 {
+            y += parser.read_be_i16()?;
+        }
+        y_coordinates.push(y);
+    }
+
+    Ok(GlyfSubtable {
+        number_of_contours,
+        x_min,
+        y_min,
+        x_max,
+        y_max,
+        end_pts_of_contours,
+        instruction_length,
+        instructions,
+        flags,
+        x_coordinates,
+        y_coordinates,
     })
 }
 
